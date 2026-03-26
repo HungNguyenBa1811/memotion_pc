@@ -25,8 +25,6 @@ class BackendWsService {
 
   // Stored after connect() for reconnect and fetchResult.
   String? _sessionId;
-  // TODO(jwt): re-enable auth — stored but unused until backend is up.
-  // ignore: unused_field
   String? _jwt;
   bool _intentionalClose = false;
   int _reconnectAttempts = 0;
@@ -66,7 +64,7 @@ class BackendWsService {
     final response = await _dio.post(
       AppConstants.poseSessionsEndpoint,
       data: {'workout_id': workoutId, 'exercise_type': exerciseType},
-      // TODO(jwt): options: Options(headers: {'Authorization': 'Bearer $jwt'}),
+      options: Options(headers: {'Authorization': 'Bearer $jwt'}),
     );
     final data = response.data as Map<String, dynamic>;
     final inner = data['data'] as Map<String, dynamic>? ?? data;
@@ -93,7 +91,7 @@ class BackendWsService {
   }) async {
     final response = await _dio.get(
       '${AppConstants.poseSessionsEndpoint}/$sessionId',
-      // TODO(jwt): options: Options(headers: {'Authorization': 'Bearer $jwt'}),
+      options: Options(headers: {'Authorization': 'Bearer $jwt'}),
     );
     final data = response.data as Map<String, dynamic>;
     final inner = data['data'] as Map<String, dynamic>? ?? data;
@@ -136,7 +134,7 @@ class BackendWsService {
 
     _channel = WebSocketChannel.connect(
       uri,
-      // TODO(jwt): protocols: ['Authorization', 'Bearer $_jwt'],
+      protocols: ['Authorization', 'Bearer $_jwt'],
     );
 
     _channel!.stream.listen(

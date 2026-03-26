@@ -305,11 +305,10 @@ class PairingNotifier extends StateNotifier<PairingState> {
     }
 
     final request = PairRequest.fromJson(msg);
-    // TODO(jwt): re-enable when backend auth is live.
-    // if (request.jwt.isEmpty) {
-    //   _localServer.send(PcMessages.sessionFailed('Missing JWT.'));
-    //   return;
-    // }
+    if (request.jwt.isEmpty) {
+      _localServer.send(PcMessages.sessionFailed('Missing JWT.'));
+      return;
+    }
 
     state = state.copyWith(
       status: PairingStatus.paired,
@@ -328,17 +327,6 @@ class PairingNotifier extends StateNotifier<PairingState> {
       onTimeout: _onAndroidDisconnected,
     );
     _heartbeat!.start();
-
-    // Skip backend when using mock workout — backend may not be running.
-    if (request.workoutId == 'mock-workout-id') {
-      developer.log('[Pairing] Mock mode — skipping backend, sending session_started');
-      state = state.copyWith(
-        status: PairingStatus.sessionActive,
-        sessionId: 'mock-session-id',
-      );
-      _localServer.send(PcMessages.sessionStarted('mock-session-id'));
-      return;
-    }
 
     await _connectToBackend(request);
   }
