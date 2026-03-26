@@ -1,0 +1,55 @@
+name: memotion_pc
+description: "Memotion PC Desktop companion app for workout pose detection."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management & routing
+  flutter_riverpod: ^2.6.1
+  go_router: ^14.6.0
+
+  # UI
+  google_fonts: ^6.2.1
+  cupertino_icons: ^1.0.8
+
+  # WebSocket server (local LAN)
+  shelf: ^1.4.2
+  shelf_web_socket: ^2.0.0
+
+  # WebSocket client (backend + local)
+  web_socket_channel: ^3.0.1
+
+  # QR code generation
+  qr_flutter: ^4.1.0
+
+  # LAN IP discovery
+  network_info_plus: ^6.0.1
+
+  # Token generation
+  crypto: ^3.0.6
+
+  # HTTP client (backend REST)
+  dio: ^5.4.0
+
+  # Settings persistence
+  shared_preferences: ^2.3.2
+
+  # Camera (webcam capture — Windows/Linux/macOS, no startImageStream needed)
+  flutter_lite_camera: ^0.0.2
+
+  # Image processing (frame encoding)
+  image: ^4.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
