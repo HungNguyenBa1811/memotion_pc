@@ -5,7 +5,9 @@
       "Bash(flutter analyze:*)",
       "Bash(flutter build:*)",
       "Bash(flutter doctor:*)",
-      "Bash(flutter --version)"
+      "Bash(flutter --version)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(find /d/Code/Mobile/memotion_pc/lib/features -type f -name *.dart)"
     ]
   }
 }

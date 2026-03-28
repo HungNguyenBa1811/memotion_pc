@@ -207,6 +207,16 @@ Win32Window::MessageHandler(HWND hwnd,
       return 0;
     }
 
+    case WM_GETMINMAXINFO: {
+      // Enforce a minimum window size of 1024×680 (DPI-aware).
+      UINT dpi = GetDpiForWindow(hwnd);
+      double scale = static_cast<double>(dpi) / 96.0;
+      auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
+      info->ptMinTrackSize.x = static_cast<LONG>(1024 * scale);
+      info->ptMinTrackSize.y = static_cast<LONG>(680 * scale);
+      return 0;
+    }
+
     case WM_ACTIVATE:
       if (child_content_ != nullptr) {
         SetFocus(child_content_);

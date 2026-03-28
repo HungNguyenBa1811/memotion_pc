@@ -13,7 +13,7 @@ class AppConstants {
 
   // ── Heartbeat ──
   static const Duration heartbeatInterval = Duration(seconds: 5);
-  static const Duration heartbeatTimeout = Duration(seconds: 15);
+  static const Duration heartbeatTimeout = Duration(seconds: 20);
 
   // ── QR Token ──
   static const Duration qrTokenValidity = Duration(minutes: 10);

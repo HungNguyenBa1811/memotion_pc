@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:developer' as developer;
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -20,10 +19,10 @@ import '../services/pairing_token_service.dart';
 
 enum PairingStatus {
   idle,
-  starting,       // Starting local WS server
+  starting, // Starting local WS server
   awaitingPairing, // Server up, waiting for Android to connect and pair
-  paired,         // pair_request validated, pair_confirmed sent
-  sessionActive,  // Backend session started, forwarded session_id to Android
+  paired, // pair_request validated, pair_confirmed sent
+  sessionActive, // Backend session started, forwarded session_id to Android
   sessionComplete,
   error,
   disconnected,
@@ -39,8 +38,11 @@ class PairingState {
   final String? sessionId;
   final SessionResult? sessionResult;
   final String? errorMessage;
-  final PoseResult? poseResult;   // latest real-time result from backend
-  final bool cameraReady;         // camera successfully initialized
+  final PoseResult? poseResult; // latest real-time result from backend
+  final bool cameraReady; // camera successfully initialized
+  final int debugFramesSent; // DEBUG: frames piped to backend
+  final int debugMsgsReceived; // DEBUG: frame_result msgs from backend
+  final String debugLastMsg; // DEBUG: last raw backend message summary
 
   const PairingState({
     this.status = PairingStatus.idle,
@@ -54,14 +56,19 @@ class PairingState {
     this.errorMessage,
     this.poseResult,
     this.cameraReady = false,
+    this.debugFramesSent = 0,
+    this.debugMsgsReceived = 0,
+    this.debugLastMsg = '—',
   });
 
   bool get isQrReady =>
-      lanIp != null && wsPort != null && qrToken != null && tokenExpiryMs != null;
+      lanIp != null &&
+      wsPort != null &&
+      qrToken != null &&
+      tokenExpiryMs != null;
 
   bool get isTokenExpired =>
-      tokenExpiryMs != null &&
-      PairingTokenService.isExpired(tokenExpiryMs!);
+      tokenExpiryMs != null && PairingTokenService.isExpired(tokenExpiryMs!);
 
   QrPayload? get qrPayload {
     if (!isQrReady) return null;
@@ -88,6 +95,9 @@ class PairingState {
     bool clearError = false,
     bool clearSession = false,
     bool clearPoseResult = false,
+    int? debugFramesSent,
+    int? debugMsgsReceived,
+    String? debugLastMsg,
   }) {
     return PairingState(
       status: status ?? this.status,
@@ -95,12 +105,17 @@ class PairingState {
       wsPort: wsPort ?? this.wsPort,
       qrToken: qrToken ?? this.qrToken,
       tokenExpiryMs: tokenExpiryMs ?? this.tokenExpiryMs,
-      sessionConfig: clearSession ? null : (sessionConfig ?? this.sessionConfig),
+      sessionConfig:
+          clearSession ? null : (sessionConfig ?? this.sessionConfig),
       sessionId: clearSession ? null : (sessionId ?? this.sessionId),
-      sessionResult: clearSession ? null : (sessionResult ?? this.sessionResult),
+      sessionResult:
+          clearSession ? null : (sessionResult ?? this.sessionResult),
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
       poseResult: clearPoseResult ? null : (poseResult ?? this.poseResult),
       cameraReady: cameraReady ?? this.cameraReady,
+      debugFramesSent: debugFramesSent ?? this.debugFramesSent,
+      debugMsgsReceived: debugMsgsReceived ?? this.debugMsgsReceived,
+      debugLastMsg: debugLastMsg ?? this.debugLastMsg,
     );
   }
 }
@@ -118,7 +133,7 @@ class PairingNotifier extends StateNotifier<PairingState> {
   StreamSubscription<bool>? _connectionSub;
   StreamSubscription<Map<String, dynamic>>? _backendMsgSub;
   StreamSubscription<Uint8List>? _previewSub; // feeds cameraPreviewProvider
-  StreamSubscription<Uint8List>? _frameSub;   // feeds BackendWsService
+  StreamSubscription<Uint8List>? _frameSub; // feeds BackendWsService
   Timer? _tokenRefreshTimer;
 
   PairingNotifier(this._ref) : super(const PairingState());
@@ -145,7 +160,6 @@ class PairingNotifier extends StateNotifier<PairingState> {
         lanIp: ip,
         wsPort: port,
       );
-      developer.log('[Pairing] Server ready at $ip:$port');
 
       // Initialise camera in background — non-blocking
       _initCamera();
@@ -182,12 +196,15 @@ class PairingNotifier extends StateNotifier<PairingState> {
     SessionResult? result;
     if (sessionId != null && jwt != null) {
       try {
-        result = await _backendWs.fetchResult(
-            sessionId: sessionId, jwt: jwt);
-        developer.log(
-            '[Pairing] Result: ${result.reps} reps, score ${result.score}');
-      } catch (e) {
-        developer.log('[Pairing] fetchResult failed (non-fatal): $e');
+        result = await _backendWs.fetchResult(sessionId: sessionId, jwt: jwt);
+      } catch (e) {}
+
+      // Mark task complete on backend before notifying Android.
+      final workoutId = state.sessionConfig?.workoutId;
+      if (workoutId != null && workoutId.isNotEmpty) {
+        try {
+          await _backendWs.markTaskCompleted(workoutId: workoutId, jwt: jwt);
+        } catch (e) {}
       }
     }
 
@@ -232,6 +249,11 @@ class PairingNotifier extends StateNotifier<PairingState> {
 
   Future<void> _initCamera() async {
     if (_camera.isInitialized) {
+      // Camera already initialized — restart preview sub (cancelled by reset()).
+      _previewSub?.cancel();
+      _previewSub = _camera.frameStream.listen((jpeg) {
+        _ref.read(cameraPreviewProvider.notifier).state = jpeg;
+      });
       state = state.copyWith(cameraReady: true);
       return;
     }
@@ -244,9 +266,7 @@ class PairingNotifier extends StateNotifier<PairingState> {
         _ref.read(cameraPreviewProvider.notifier).state = jpeg;
       });
       state = state.copyWith(cameraReady: true);
-      developer.log('[Camera] Ready');
     } catch (e) {
-      developer.log('[Camera] Init failed: $e');
       state = state.copyWith(cameraReady: false, errorMessage: 'Camera: $e');
     }
   }
@@ -263,8 +283,9 @@ class PairingNotifier extends StateNotifier<PairingState> {
     );
     const refreshBuffer = Duration(seconds: 30);
     final refreshIn = Duration(
-      milliseconds: expiry - DateTime.now().millisecondsSinceEpoch,
-    ) - refreshBuffer;
+          milliseconds: expiry - DateTime.now().millisecondsSinceEpoch,
+        ) -
+        refreshBuffer;
     if (refreshIn > Duration.zero) {
       _tokenRefreshTimer = Timer(refreshIn, refreshToken);
     }
@@ -277,7 +298,6 @@ class PairingNotifier extends StateNotifier<PairingState> {
     _messageSub = _localServer.messages.listen(_handleMessage);
     _connectionSub = _localServer.connectionState.listen((connected) {
       if (!connected && state.status == PairingStatus.sessionActive) {
-        developer.log('[Pairing] Android disconnected mid-session');
         _onAndroidDisconnected();
       }
     });
@@ -285,14 +305,13 @@ class PairingNotifier extends StateNotifier<PairingState> {
 
   void _handleMessage(Map<String, dynamic> msg) {
     final type = msg['type'] as String?;
-    developer.log('[Pairing] Handling message: $type');
 
     switch (type) {
       case AndroidMessageType.pairRequest:
         _handlePairRequest(msg);
       case AndroidMessageType.heartbeatPing:
         _localServer.send(PcMessages.heartbeatPong());
-        _heartbeat?.receivedPong();
+        _heartbeat?.receivedPing();
       case AndroidMessageType.disconnect:
         _onAndroidDisconnected();
     }
@@ -300,7 +319,8 @@ class PairingNotifier extends StateNotifier<PairingState> {
 
   Future<void> _handlePairRequest(Map<String, dynamic> msg) async {
     if (state.isTokenExpired) {
-      _localServer.send(PcMessages.sessionFailed('QR code expired. Please refresh.'));
+      _localServer
+          .send(PcMessages.sessionFailed('QR code expired. Please refresh.'));
       return;
     }
 
@@ -316,16 +336,13 @@ class PairingNotifier extends StateNotifier<PairingState> {
         jwt: request.jwt,
         workoutId: request.workoutId,
         exerciseType: request.exerciseType,
+        videoUrl: request.videoUrl, // full URL if mobile sends it
       ),
     );
 
     _localServer.send(PcMessages.pairConfirmed());
-    developer.log('[Pairing] Paired with Android');
 
-    _heartbeat = HeartbeatManager(
-      onPingSend: () => _localServer.send(PcMessages.heartbeatPong()),
-      onTimeout: _onAndroidDisconnected,
-    );
+    _heartbeat = HeartbeatManager(onTimeout: _onAndroidDisconnected);
     _heartbeat!.start();
 
     await _connectToBackend(request);
@@ -336,31 +353,54 @@ class PairingNotifier extends StateNotifier<PairingState> {
     // without restarting the app.
     final settings = _ref.read(settingsProvider);
     _backendWs.baseHttpUrl = settings.backendBaseUrl;
-    _backendWs.baseWsUrl   = settings.backendWsBase;
+    _backendWs.baseWsUrl = settings.backendWsBase;
 
     try {
-      developer.log('[Pairing] Creating backend session...');
-      final sessionId = await _backendWs.createSession(
-        jwt: request.jwt,
-        workoutId: request.workoutId,
-        exerciseType: request.exerciseType,
-      );
+      // Fetch video path in parallel with session creation — non-fatal if fails.
+      final results = await Future.wait([
+        _backendWs.createSession(
+          jwt: request.jwt,
+          workoutId: request.workoutId,
+          exerciseType: request.exerciseType,
+        ),
+        _backendWs
+            .fetchWorkoutVideoPath(
+              workoutId: request.workoutId,
+              jwt: request.jwt,
+            )
+            .catchError((_) => null),
+      ]);
+
+      final sessionId =
+          results[0]!; // non-null: createSession always returns String
+      final videoPath = results[1]; // String? from fetchWorkoutVideoPath
 
       await _backendWs.connect(sessionId: sessionId, jwt: request.jwt);
+
+      // Priority: video_url from pair_request (mobile sends full URL).
+      // Fallback: build URL from fetched videoPath (relative path from API).
+      final existingVideoUrl = state.sessionConfig?.videoUrl;
+      final resolvedVideoUrl = existingVideoUrl?.isNotEmpty == true
+          ? existingVideoUrl
+          : (videoPath != null && videoPath.isNotEmpty)
+              ? '${_backendWs.baseHttpUrl}$videoPath'
+              : null;
 
       state = state.copyWith(
         status: PairingStatus.sessionActive,
         sessionId: sessionId,
+        sessionConfig: state.sessionConfig?.copyWith(
+          videoPath: videoPath,
+          videoUrl: resolvedVideoUrl,
+        ),
       );
 
       _localServer.send(PcMessages.sessionStarted(sessionId));
-      developer.log('[Pairing] Session active: $sessionId');
 
       // Start listening to backend results and piping frames
       _listenToBackend();
       _startFramePipe();
     } catch (e) {
-      developer.log('[Pairing] Backend error: $e');
       _localServer.send(PcMessages.sessionFailed('Backend error: $e'));
       state = state.copyWith(
         status: PairingStatus.error,
@@ -371,24 +411,73 @@ class PairingNotifier extends StateNotifier<PairingState> {
 
   /// Subscribes to backend WebSocket messages.
   ///
-  /// - `frame_result`      → update live pose stats in state
-  /// - `annotated_frame`   → relay to Android so the phone can display skeleton
-  /// - `connection_failed` → backend gave up reconnecting; surface as error
+  /// Backend message routing (real protocol — no generic 'type' field on frames):
+  /// - `event: session_completed` → trigger session end
+  /// - `error` key present        → log and surface in debug overlay
+  /// - `phase` key present        → frame result → update [PoseResult]
+  /// - `type: annotated_frame`    → relay skeleton to Android
+  /// - `type: connection_failed`  → internal sentinel from [BackendWsService]
   void _listenToBackend() {
     _backendMsgSub?.cancel();
-    _backendMsgSub = _backendWs.messages.listen((msg) {
-      final type = msg['type'] as String?;
-      switch (type) {
-        case 'frame_result':
-          state = state.copyWith(poseResult: PoseResult.fromJson(msg));
-        case 'annotated_frame':
-          // Forward annotated JPEG to Android — phone renders skeleton overlay.
-          _localServer.send(msg);
-        case 'connection_failed':
-          developer.log('[Pairing] Backend permanently unreachable');
+    _backendMsgSub = _backendWs.messages.listen(
+      (msg) {
+        // 1. session_completed event — one-time signal from backend
+        if (msg['event'] == 'session_completed') {
+          state = state.copyWith(
+            poseResult: PoseResult.fromJson({'phase': 5}),
+            debugLastMsg: 'event=session_completed',
+          );
+          return;
+        }
+
+        // 2. Internal sentinel: BackendWsService max-reconnect exhausted
+        if (msg['type'] == 'connection_failed') {
+          state = state.copyWith(debugLastMsg: 'connection_failed');
           _onBackendFailed();
-      }
-    });
+          return;
+        }
+
+        // 3. annotated_frame — relay skeleton overlay to Android
+        if (msg['type'] == 'annotated_frame') {
+          _localServer.send(msg);
+          return;
+        }
+
+        // 4. Error message: {"error": "...", "code": "..."}
+        if (msg.containsKey('error')) {
+          final errMsg = msg['error'] ?? '';
+          final errCode = msg['code'] ?? '';
+          state =
+              state.copyWith(debugLastMsg: 'ERROR code=$errCode msg=$errMsg');
+          return;
+        }
+
+        // 5. Frame result — identified by presence of 'phase' int field.
+        //    Backend does NOT use a generic 'type' field on these messages.
+        if (msg.containsKey('phase')) {
+          final n = state.debugMsgsReceived + 1;
+          final phase = msg['phase'];
+          final phaseName = msg['phase_name'] ?? '?';
+          final fps = msg['fps']?.toStringAsFixed(1) ?? '-';
+          state = state.copyWith(
+            poseResult: PoseResult.fromJson(msg),
+            debugMsgsReceived: n,
+            debugLastMsg: '#$n ph=$phase($phaseName) fps=$fps',
+          );
+          return;
+        }
+
+        // 6. Unknown
+        state =
+            state.copyWith(debugLastMsg: 'unknown keys=${msg.keys.toList()}');
+      },
+      onError: (e) {
+        state = state.copyWith(debugLastMsg: 'ERROR: $e');
+      },
+      onDone: () {
+        state = state.copyWith(debugLastMsg: 'stream closed');
+      },
+    );
   }
 
   void _onBackendFailed() {
@@ -407,20 +496,24 @@ class PairingNotifier extends StateNotifier<PairingState> {
   /// Pipes webcam frames from [CameraService] to [BackendWsService].
   void _startFramePipe() {
     if (!state.cameraReady) {
-      developer.log('[FramePipe] Camera not ready — skipping frame pipe');
+      state =
+          state.copyWith(debugLastMsg: 'FramePipe SKIPPED: camera not ready');
       return;
     }
     _frameSub?.cancel();
     _frameSub = _camera.frameStream.listen((jpegBytes) {
       if (state.status == PairingStatus.sessionActive) {
         _backendWs.sendFrame(jpegBytes);
+        final n = state.debugFramesSent + 1;
+        // Update counter every 30 frames to avoid excessive rebuilds
+        if (n % 30 == 0) {
+          state = state.copyWith(debugFramesSent: n);
+        }
       }
     });
-    developer.log('[FramePipe] Started');
   }
 
   void _onAndroidDisconnected() {
-    developer.log('[Pairing] Android disconnected');
     _frameSub?.cancel();
     _frameSub = null;
     _heartbeat?.stop();

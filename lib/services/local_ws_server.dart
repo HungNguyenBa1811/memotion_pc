@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:math';
 
@@ -20,8 +19,7 @@ class LocalWsServer {
   WebSocketChannel? _client;
   int? _port;
 
-  final _messageController =
-      StreamController<Map<String, dynamic>>.broadcast();
+  final _messageController = StreamController<Map<String, dynamic>>.broadcast();
   final _connectionController = StreamController<bool>.broadcast();
 
   Stream<Map<String, dynamic>> get messages => _messageController.stream;
@@ -47,7 +45,6 @@ class LocalWsServer {
           shared: false,
         );
         _port = port;
-        developer.log('[LocalWsServer] Listening on port $port');
         return port;
       } catch (_) {
         // port in use, try another
@@ -59,12 +56,10 @@ class LocalWsServer {
 
   void _handleConnection(WebSocketChannel channel) {
     if (_client != null) {
-      developer.log('[LocalWsServer] Rejecting extra client');
       channel.sink.close(1008, 'Server busy');
       return;
     }
 
-    developer.log('[LocalWsServer] Android connected');
     _client = channel;
     _connectionController.add(true);
 
@@ -73,19 +68,14 @@ class LocalWsServer {
         if (data is! String || data.trim().isEmpty) return;
         try {
           final json = jsonDecode(data) as Map<String, dynamic>;
-          developer.log('[LocalWsServer] ← ${json['type']}');
           _messageController.add(json);
-        } catch (e) {
-          developer.log('[LocalWsServer] Parse error: $e');
-        }
+        } catch (e) {}
       },
       onDone: () {
-        developer.log('[LocalWsServer] Android disconnected');
         _client = null;
         _connectionController.add(false);
       },
       onError: (e) {
-        developer.log('[LocalWsServer] Connection error: $e');
         _client = null;
         _connectionController.add(false);
       },
@@ -96,11 +86,9 @@ class LocalWsServer {
   /// Sends a JSON message to the connected Android client.
   void send(Map<String, dynamic> message) {
     if (_client == null) {
-      developer.log('[LocalWsServer] No client — drop ${message['type']}');
       return;
     }
     final encoded = jsonEncode(message);
-    developer.log('[LocalWsServer] → ${message['type']}');
     _client!.sink.add(encoded);
   }
 
@@ -116,7 +104,6 @@ class LocalWsServer {
     await _server?.close(force: true);
     _server = null;
     _port = null;
-    developer.log('[LocalWsServer] Stopped');
   }
 
   void dispose() {

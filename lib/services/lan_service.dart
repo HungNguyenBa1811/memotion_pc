@@ -36,9 +36,9 @@ class LanService {
       });
       for (final iface in [...preferred, ...interfaces]) {
         for (final addr in iface.addresses) {
-          if (!addr.isLoopback && addr.address.startsWith('192.168.') ||
+          if (!addr.isLoopback && (addr.address.startsWith('192.168.') ||
               addr.address.startsWith('10.') ||
-              addr.address.startsWith('172.')) {
+              addr.address.startsWith('172.'))) {
             return addr.address;
           }
         }

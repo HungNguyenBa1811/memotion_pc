@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:developer' as developer;
 import 'dart:typed_data';
 
 import 'package:flutter_lite_camera/flutter_lite_camera.dart';
@@ -30,7 +29,6 @@ class CameraService {
     final ok = await _lite.open(idx);
     if (!ok) throw StateError('Failed to open camera "${devices[idx]}".');
 
-    developer.log('[Camera] Opened: ${devices[idx]}');
     _opened = true;
     _running = true;
     _captureLoop();
@@ -50,9 +48,7 @@ class CameraService {
             _frameController.add(jpeg);
           }
         }
-      } catch (e) {
-        developer.log('[Camera] Capture error: $e');
-      }
+      } catch (e) {}
       // ~33fps — yield to event loop between frames
       await Future.delayed(const Duration(milliseconds: 30));
     }
@@ -71,7 +67,6 @@ class CameraService {
       );
       return Uint8List.fromList(img.encodeJpg(raw, quality: 75));
     } catch (e) {
-      developer.log('[Camera] JPEG encode error: $e');
       return null;
     }
   }
@@ -83,6 +78,5 @@ class CameraService {
       _opened = false;
     }
     if (!_frameController.isClosed) await _frameController.close();
-    developer.log('[Camera] Disposed');
   }
 }

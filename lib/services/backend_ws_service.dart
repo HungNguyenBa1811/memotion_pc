@@ -1,9 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:developer' as developer;
-import 'dart:typed_data';
-
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../core/constants.dart';
@@ -29,8 +27,7 @@ class BackendWsService {
   bool _intentionalClose = false;
   int _reconnectAttempts = 0;
 
-  final _messageController =
-      StreamController<Map<String, dynamic>>.broadcast();
+  final _messageController = StreamController<Map<String, dynamic>>.broadcast();
   final _connectionController = StreamController<bool>.broadcast();
 
   /// JSON messages from backend (frame_result, annotated_frame, …).
@@ -45,9 +42,15 @@ class BackendWsService {
 
   // URLs are overwritten by PairingNotifier before every session.
   String baseHttpUrl = AppConstants.defaultBackendHttp;
-  String baseWsUrl   = AppConstants.defaultBackendWs;
+  String baseWsUrl = AppConstants.defaultBackendWs;
 
-  Dio get _dio => Dio(BaseOptions(
+  /// Inject a pre-configured [Dio] in tests to avoid real HTTP calls.
+  @visibleForTesting
+  Dio? dioOverride;
+
+  Dio get _dio =>
+      dioOverride ??
+      Dio(BaseOptions(
         baseUrl: baseHttpUrl,
         connectTimeout: const Duration(seconds: 10),
         receiveTimeout: const Duration(seconds: 10),
@@ -83,19 +86,49 @@ class BackendWsService {
     await _openSocket();
   }
 
-  /// Fetches the final [SessionResult] from the REST endpoint.
-  /// Call after [disconnect] once the backend has closed the session.
+  /// Ends the session and fetches the final [SessionResult].
+  /// DELETE /api/pose/sessions/{id} — backend closes session and returns results.
   Future<SessionResult> fetchResult({
     required String sessionId,
     required String jwt,
   }) async {
-    final response = await _dio.get(
+    final response = await _dio.delete(
       '${AppConstants.poseSessionsEndpoint}/$sessionId',
       options: Options(headers: {'Authorization': 'Bearer $jwt'}),
     );
     final data = response.data as Map<String, dynamic>;
     final inner = data['data'] as Map<String, dynamic>? ?? data;
     return SessionResult.fromJson(inner);
+  }
+
+  /// Marks the workout task as completed on the backend.
+  /// PUT /api/tasks/{workoutId}/complete — must be called before sending session_complete to Android.
+  Future<void> markTaskCompleted({
+    required String workoutId,
+    required String jwt,
+  }) async {
+    await _dio.put(
+      '/api/tasks/$workoutId/complete',
+      options: Options(headers: {'Authorization': 'Bearer $jwt'}),
+    );
+  }
+
+  /// Fetches the video_path for a workout task.
+  /// GET /api/tasks/{workoutId} → exercise_detail.video_path (relative, e.g. "/videos/arm_raise.mp4")
+  /// Returns null if the field is missing or the request fails.
+  Future<String?> fetchWorkoutVideoPath({
+    required String workoutId,
+    required String jwt,
+  }) async {
+    final response = await _dio.get(
+      '/api/tasks/$workoutId',
+      options: Options(headers: {'Authorization': 'Bearer $jwt'}),
+    );
+    final body = response.data as Map<String, dynamic>?;
+    final data = body?['data'] as Map<String, dynamic>? ?? body ?? {};
+    final exerciseDetail = data['exercise_detail'] as Map<String, dynamic>?;
+    return (exerciseDetail?['video_path'] as String?) ??
+        (data['video_path'] as String?);
   }
 
   void sendRaw(String data) => _channel?.sink.add(data);
@@ -105,7 +138,7 @@ class BackendWsService {
     if (_channel == null) return;
     _channel!.sink.add(jsonEncode({
       'type': 'frame',
-      'data': base64Encode(jpegBytes),
+      'frame_data': base64Encode(jpegBytes),
       'timestamp': DateTime.now().millisecondsSinceEpoch,
     }));
   }
@@ -115,7 +148,6 @@ class BackendWsService {
     _intentionalClose = true;
     await _channel?.sink.close();
     _channel = null;
-    developer.log('[BackendWs] Disconnected');
   }
 
   void dispose() {
@@ -130,7 +162,6 @@ class BackendWsService {
     final uri = Uri.parse(
       '$baseWsUrl${AppConstants.poseSessionsEndpoint}/$_sessionId/ws',
     );
-    developer.log('[BackendWs] Connecting to $uri (attempt ${_reconnectAttempts + 1})');
 
     _channel = WebSocketChannel.connect(
       uri,
@@ -142,13 +173,11 @@ class BackendWsService {
         if (data is! String || data.trim().isEmpty) return;
         try {
           final json = jsonDecode(data) as Map<String, dynamic>;
-          developer.log('[BackendWs] ← ${json['type'] ?? 'unknown'}');
           _messageController.add(json);
         } catch (_) {}
       },
       onDone: _onSocketClosed,
       onError: (e) {
-        developer.log('[BackendWs] Error: $e');
         _onSocketClosed();
       },
       cancelOnError: false,
@@ -156,7 +185,6 @@ class BackendWsService {
 
     _reconnectAttempts = 0;
     _connectionController.add(true);
-    developer.log('[BackendWs] Connected to session $_sessionId');
   }
 
   void _onSocketClosed() {
@@ -168,13 +196,10 @@ class BackendWsService {
     if (_reconnectAttempts < maxReconnectAttempts) {
       _reconnectAttempts++;
       final delay = Duration(seconds: _reconnectAttempts * 2); // 2s, 4s, 6s
-      developer.log(
-          '[BackendWs] Unexpected close — reconnect #$_reconnectAttempts in ${delay.inSeconds}s');
       Future.delayed(delay, () {
         if (!_intentionalClose) _openSocket();
       });
     } else {
-      developer.log('[BackendWs] Max reconnect attempts reached');
       // Emit a sentinel so the provider can react.
       _messageController.add({'type': 'connection_failed'});
     }

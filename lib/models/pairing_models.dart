@@ -50,11 +50,13 @@ class PairRequest {
   final String jwt;
   final String workoutId;
   final String exerciseType;
+  final String? videoUrl; // full URL from session_config.video_url (may be null)
 
   const PairRequest({
     required this.jwt,
     required this.workoutId,
     required this.exerciseType,
+    this.videoUrl,
   });
 
   factory PairRequest.fromJson(Map<String, dynamic> json) {
@@ -63,6 +65,7 @@ class PairRequest {
       jwt: json['jwt'] as String? ?? '',
       workoutId: config['workout_id'] as String? ?? '',
       exerciseType: config['exercise_type'] as String? ?? 'arm_raise',
+      videoUrl: config['video_url'] as String?,
     );
   }
 }

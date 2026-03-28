@@ -7,6 +7,8 @@ import '../core/theme.dart';
 import '../models/session_models.dart';
 import '../providers/pairing_provider.dart';
 
+const _coral = Color(0xFFD67052);
+
 class ResultScreen extends ConsumerWidget {
   final PairingStatus finalStatus;
 
@@ -14,84 +16,91 @@ class ResultScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final sessionResult = ref.watch(
-      pairingProvider.select((s) => s.sessionResult),
-    );
+    final result = ref.watch(pairingProvider.select((s) => s.sessionResult));
     final isSuccess = finalStatus == PairingStatus.sessionComplete;
 
     return Scaffold(
       body: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
+          constraints: const BoxConstraints(maxWidth: 560),
           child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(vertical: 48),
+            padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // ── Status icon ───────────────────────────────────────────
-                Container(
-                  width: 120,
-                  height: 120,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: isSuccess
-                        ? AppTheme.primary.withValues(alpha: 0.15)
-                        : AppTheme.error.withValues(alpha: 0.15),
-                  ),
-                  child: Icon(
-                    isSuccess
-                        ? Icons.check_circle_outline
-                        : Icons.error_outline,
-                    size: 64,
-                    color: isSuccess ? AppTheme.primary : AppTheme.error,
-                  ),
-                ),
-                const SizedBox(height: 28),
-
+                // ── Header ────────────────────────────────────────────────
                 Text(
-                  isSuccess ? 'Session hoàn tất!' : _errorTitle(finalStatus),
+                  isSuccess ? 'Session Complete' : _errorTitle(finalStatus),
                   style: const TextStyle(
-                      fontSize: 28, fontWeight: FontWeight.bold),
+                      fontSize: 13,
+                      color: AppTheme.onSurfaceMuted,
+                      letterSpacing: 1.2),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 4),
                 Text(
-                  isSuccess
-                      ? 'Kết quả đã được gửi về Android.'
-                      : _errorSubtitle(finalStatus),
+                  isSuccess ? 'Great Effort!' : _errorSubtitle(finalStatus),
+                  style: const TextStyle(
+                      fontSize: 26, fontWeight: FontWeight.bold),
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      color: AppTheme.onSurfaceMuted, height: 1.5),
                 ),
+                const SizedBox(height: 32),
 
-                // ── Stats card (success only) ──────────────────────────────
                 if (isSuccess) ...[
-                  const SizedBox(height: 36),
-                  _StatsCard(result: sessionResult),
+                  // ── Score arc ────────────────────────────────────────
+                  _ScoreArc(result: result),
+                  const SizedBox(height: 12),
+                  const Text(
+                    "You're making excellent progress.",
+                    style: TextStyle(
+                        color: AppTheme.onSurfaceMuted, fontSize: 13),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 32),
+
+                  // ── Stats row ────────────────────────────────────────
+                  if (result != null) _StatsRow(result: result),
+
+                  // ── AI summary ───────────────────────────────────────
+                  if (result?.summary != null &&
+                      result!.summary!.isNotEmpty) ...[
+                    const SizedBox(height: 24),
+                    _SummaryCard(summary: result.summary!),
+                  ],
+
+                  // ── Improvements ─────────────────────────────────────
+                  if (result?.recommendations != null &&
+                      result!.recommendations!.isNotEmpty) ...[
+                    const SizedBox(height: 28),
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'What to improve',
+                        style: TextStyle(
+                            fontSize: 15, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    ...result.recommendations!
+                        .map((r) => _RecommendationCard(text: r)),
+                  ],
+                ] else ...[
+                  // ── Error icon ───────────────────────────────────────
+                  Container(
+                    width: 100,
+                    height: 100,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: AppTheme.error.withValues(alpha: 0.12),
+                    ),
+                    child: const Icon(Icons.error_outline,
+                        size: 52, color: AppTheme.error),
+                  ),
                 ],
 
-                const SizedBox(height: 40),
+                const SizedBox(height: 48),
 
                 // ── Actions ───────────────────────────────────────────────
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Session mới'),
-                      onPressed: () async {
-                        await ref.read(pairingProvider.notifier).reset();
-                        if (context.mounted) {
-                          await ref
-                              .read(pairingProvider.notifier)
-                              .startServer();
-                          if (context.mounted) {
-                            context.go(AppRoutes.qrDisplay);
-                          }
-                        }
-                      },
-                    ),
-                  ],
-                ),
+                _ActionsRow(finalStatus: finalStatus, ref: ref),
               ],
             ),
           ),
@@ -108,56 +117,92 @@ class ResultScreen extends ConsumerWidget {
 
   String _errorSubtitle(PairingStatus status) => switch (status) {
         PairingStatus.disconnected =>
-          'Android đã ngắt kết nối trong lúc session đang chạy.\nSession đã bị huỷ.',
+          'Android đã ngắt kết nối trong lúc session đang chạy.',
         PairingStatus.error => 'Đã xảy ra lỗi trong lúc thực hiện session.',
         _ => '',
       };
 }
 
-// ── Stats card ────────────────────────────────────────────────────────────────
+// ── Score arc ─────────────────────────────────────────────────────────────────
 
-class _StatsCard extends StatelessWidget {
+class _ScoreArc extends StatelessWidget {
   final SessionResult? result;
-  const _StatsCard({required this.result});
+  const _ScoreArc({required this.result});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(28),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceContainer,
-        borderRadius: BorderRadius.circular(20),
+    // Prefer totalScore (0–100) from extended API; fall back to legacy score (0–1)
+    final scoreOf100 =
+        result?.totalScore ?? ((result?.score ?? 0.0) * 100);
+    final progress = (scoreOf100 / 100).clamp(0.0, 1.0);
+    final grade = result?.grade;
+
+    final scoreColor = scoreOf100 >= 80
+        ? AppTheme.primary
+        : scoreOf100 >= 60
+            ? Colors.orange
+            : AppTheme.error;
+
+    return SizedBox(
+      width: 180,
+      height: 180,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          SizedBox(
+            width: 180,
+            height: 180,
+            child: CircularProgressIndicator(
+              value: progress,
+              strokeWidth: 14,
+              backgroundColor: Colors.white12,
+              valueColor: AlwaysStoppedAnimation(scoreColor),
+            ),
+          ),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${scoreOf100.toInt()}',
+                style: const TextStyle(
+                    fontSize: 52, fontWeight: FontWeight.bold),
+              ),
+              const Text(
+                'Score',
+                style: TextStyle(
+                    color: AppTheme.onSurfaceMuted, fontSize: 13),
+              ),
+              if (grade != null) ...[
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: _coral,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    grade,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
       ),
-      child: result == null
-          ? const _NoResultPlaceholder()
-          : _ResultContent(result: result!),
     );
   }
 }
 
-class _NoResultPlaceholder extends StatelessWidget {
-  const _NoResultPlaceholder();
+// ── Stats row ─────────────────────────────────────────────────────────────────
 
-  @override
-  Widget build(BuildContext context) {
-    return const Column(
-      children: [
-        Icon(Icons.hourglass_empty, size: 40, color: AppTheme.onSurfaceMuted),
-        SizedBox(height: 12),
-        Text(
-          'Kết quả chưa có\nXem chi tiết trên điện thoại.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: AppTheme.onSurfaceMuted, height: 1.5),
-        ),
-      ],
-    );
-  }
-}
-
-class _ResultContent extends StatelessWidget {
+class _StatsRow extends StatelessWidget {
   final SessionResult result;
-  const _ResultContent({required this.result});
+  const _StatsRow({required this.result});
 
   @override
   Widget build(BuildContext context) {
@@ -166,92 +211,53 @@ class _ResultContent extends StatelessWidget {
     final durationLabel =
         '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
 
-    return Column(
-      children: [
-        // ── 3 big numbers ──────────────────────────────────────────────
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
+    // Accuracy: prefer flowScore, else romScore, else legacy score*100
+    final accuracy = result.flowScore ??
+        result.romScore ??
+        (result.score * 100);
+    final kcal = result.caloriesBurned;
+
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _StatTile(value: durationLabel, label: 'Duration',
+              icon: Icons.timer_outlined),
+          _vDivider(),
+          _StatTile(
+            value: '${accuracy.toStringAsFixed(0)}%',
+            label: 'Accuracy',
+            icon: Icons.star_outline,
+            valueColor: accuracy >= 80
+                ? AppTheme.primary
+                : accuracy >= 60
+                    ? Colors.orange
+                    : AppTheme.error,
+          ),
+          _vDivider(),
+          if (kcal != null) ...[
             _StatTile(
+                value: '${kcal.toInt()}',
+                label: 'Kcal',
+                icon: Icons.local_fire_department_outlined),
+            _vDivider(),
+          ],
+          _StatTile(
               value: '${result.reps}',
               label: 'Reps',
-              icon: Icons.repeat,
-            ),
-            _divider(),
-            _StatTile(
-              value: '${(result.score * 100).toStringAsFixed(0)}%',
-              label: 'Form Score',
-              icon: Icons.star_outline,
-              valueColor: _scoreColor(result.score),
-            ),
-            _divider(),
-            _StatTile(
-              value: durationLabel,
-              label: 'Duration',
-              icon: Icons.timer_outlined,
-            ),
-          ],
-        ),
-
-        // ── Score bar ──────────────────────────────────────────────────
-        const SizedBox(height: 24),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(6),
-          child: LinearProgressIndicator(
-            value: result.score.clamp(0.0, 1.0),
-            backgroundColor: Colors.white12,
-            valueColor:
-                AlwaysStoppedAnimation(_scoreColor(result.score)),
-            minHeight: 10,
-          ),
-        ),
-
-        // ── AI summary ─────────────────────────────────────────────────
-        if (result.summary != null && result.summary!.isNotEmpty) ...[
-          const SizedBox(height: 20),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: AppTheme.primary.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                  color: AppTheme.primary.withValues(alpha: 0.25)),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(Icons.auto_awesome,
-                    size: 16, color: AppTheme.primary),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    result.summary!,
-                    style: const TextStyle(
-                        fontSize: 13,
-                        color: AppTheme.onSurface,
-                        height: 1.5),
-                  ),
-                ),
-              ],
-            ),
-          ),
+              icon: Icons.repeat),
         ],
-      ],
+      ),
     );
   }
 
-  Widget _divider() => Container(
-        width: 1,
-        height: 60,
-        color: Colors.white12,
-      );
-
-  Color _scoreColor(double score) => score >= 0.8
-      ? AppTheme.primary
-      : score >= 0.5
-          ? Colors.orange
-          : AppTheme.error;
+  Widget _vDivider() => Container(
+        width: 1, height: 56, color: Colors.white12);
 }
 
 class _StatTile extends StatelessWidget {
@@ -269,23 +275,151 @@ class _StatTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Column(
+        children: [
+          Icon(icon, size: 18, color: AppTheme.onSurfaceMuted),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 26,
+              fontWeight: FontWeight.bold,
+              color: valueColor ?? AppTheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(label,
+              style: const TextStyle(
+                  color: AppTheme.onSurfaceMuted, fontSize: 11)),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Summary card ──────────────────────────────────────────────────────────────
+
+class _SummaryCard extends StatelessWidget {
+  final String summary;
+  const _SummaryCard({required this.summary});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.primary.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.primary.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.auto_awesome, size: 16, color: AppTheme.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              summary,
+              style: const TextStyle(
+                  fontSize: 13, color: AppTheme.onSurface, height: 1.5),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Recommendation card ───────────────────────────────────────────────────────
+
+class _RecommendationCard extends StatelessWidget {
+  final String text;
+  const _RecommendationCard({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: AppTheme.primary.withValues(alpha: 0.15),
+            ),
+            child: const Icon(Icons.tips_and_updates_outlined,
+                size: 14, color: AppTheme.primary),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(fontSize: 13, height: 1.4),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Actions row ───────────────────────────────────────────────────────────────
+
+class _ActionsRow extends StatelessWidget {
+  final PairingStatus finalStatus;
+  final WidgetRef ref;
+  const _ActionsRow({required this.finalStatus, required this.ref});
+
+  @override
+  Widget build(BuildContext context) {
+    final isSuccess = finalStatus == PairingStatus.sessionComplete;
     return Column(
       children: [
-        Icon(icon, size: 18, color: AppTheme.onSurfaceMuted),
-        const SizedBox(height: 8),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 32,
-            fontWeight: FontWeight.bold,
-            color: valueColor ?? AppTheme.onSurface,
+        if (isSuccess)
+          SizedBox(
+            width: 301,
+            child: FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: _coral,
+                minimumSize: const Size.fromHeight(48),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () => context.go(AppRoutes.qrDisplay),
+              child: const Text('Done'),
+            ),
           ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: const TextStyle(
-              color: AppTheme.onSurfaceMuted, fontSize: 12),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: 301,
+          child: OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(48),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+            icon: const Icon(Icons.refresh, size: 18),
+            label: const Text('New Session'),
+            onPressed: () async {
+              await ref.read(pairingProvider.notifier).reset();
+              if (context.mounted) {
+                await ref.read(pairingProvider.notifier).startServer();
+                if (context.mounted) context.go(AppRoutes.qrDisplay);
+              }
+            },
+          ),
         ),
       ],
     );
